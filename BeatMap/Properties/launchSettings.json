@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "BeatMap": {
+      "commandName": "Project",
+      "commandLineArgs": "test.bm"
+    }
+  }
+}
