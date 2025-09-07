@@ -15,15 +15,17 @@ public class WarpMessageFormatter : IMessageFormatter
     {
         StringBuilder sb = new();
         var lastElement = messageunits.LastOrDefault();
+        int currentLineCount = 0;
         foreach(var messageunit in messageunits)
         {
             string unitString = $"{messageunit.Title} {messageunit.Description} ";
-            if (sb.ToString().GetStringInConsoleGridWidth() + unitString.GetStringInConsoleGridWidth() + 4 >= Console.BufferWidth - 1)
+            if (sb.ToString().GetStringInConsoleGridWidth() + unitString.GetStringInConsoleGridWidth() + 4 >= Console.BufferWidth * (currentLineCount + 1) - 1)
             {
                 sb.AppendLine();
+                currentLineCount++;
             }
             sb.Append(unitString);
-            if (messageunit != lastElement && sb.ToString().GetStringInConsoleGridWidth() <= Console.BufferWidth - 1)
+            if (messageunit != lastElement && sb.ToString().GetStringInConsoleGridWidth() <= Console.BufferWidth * (currentLineCount + 1) - 1)
                 sb.Append("    ");
         }
 

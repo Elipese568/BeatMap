@@ -2,7 +2,7 @@
   "profiles": {
     "BeatMap": {
       "commandName": "Project",
-      "commandLineArgs": "test.bm"
+      "commandLineArgs": "output.bm"
     }
   }
 }

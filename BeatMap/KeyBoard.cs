@@ -189,8 +189,8 @@ namespace PInvoke.Net
             VK_OEM_7 = 0xDE, // ''"' for US
             VK_OEM_8 = 0xDF,
             //
-            VK_OEM_AX = 0xE1, // 'AX' key on Japanese AX kbd
-            VK_OEM_102 = 0xE2, // "<>" or "\|" on RT 102-key kbd.
+            VK_OEM_AX = 0xE1, // 'AX' key on Japanese AX VKd
+            VK_OEM_102 = 0xE2, // "<>" or "\|" on RT 102-key VKd.
             VK_ICO_HELP = 0xE3, // Help key on ICO
             VK_ICO_00 = 0xE4, // 00 key on ICO
                               //
@@ -224,32 +224,42 @@ namespace PInvoke.Net
             VK_PA1 = 0xFD,
             VK_OEM_CLEAR = 0xFE,
             //
-            KB_A = 'A',
-            KB_B = 'B',
-            KB_C = 'C',
-            KB_D = 'D',
-            KB_E = 'E',
-            KB_F = 'F',
-            KB_G = 'G',
-            KB_H = 'H',
-            KB_I = 'I',
-            KB_J = 'J',
-            KB_K = 'K',
-            KB_L = 'L',
-            KB_M = 'M',
-            KB_N = 'N',
-            KB_O = 'O',
-            KB_P = 'P',
-            KB_Q = 'Q',
-            KB_R = 'R',
-            KB_S = 'S',
-            KB_T = 'T',
-            KB_U = 'U',
-            KB_V = 'V',
-            KB_W = 'W',
-            KB_X = 'X',
-            KB_Y = 'Y',
-            KB_Z = 'Z'
+            VK_A = 'A',
+            VK_B = 'B',
+            VK_C = 'C',
+            VK_D = 'D',
+            VK_E = 'E',
+            VK_F = 'F',
+            VK_G = 'G',
+            VK_H = 'H',
+            VK_I = 'I',
+            VK_J = 'J',
+            VK_K = 'K',
+            VK_L = 'L',
+            VK_M = 'M',
+            VK_N = 'N',
+            VK_O = 'O',
+            VK_P = 'P',
+            VK_Q = 'Q',
+            VK_R = 'R',
+            VK_S = 'S',
+            VK_T = 'T',
+            VK_U = 'U',
+            VK_V = 'V',
+            VK_W = 'W',
+            VK_X = 'X',
+            VK_Y = 'Y',
+            VK_Z = 'Z',
+            VK_1 = '1',
+            VK_2 = '2',
+            VK_3 = '3',
+            VK_4 = '4',
+            VK_5 = '5',
+            VK_6 = '6',
+            VK_7 = '7',
+            VK_8 = '8',
+            VK_9 = '9',
+            VK_0 = '0',
         }
     }
 }

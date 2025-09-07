@@ -20,7 +20,7 @@ And in `Notes`, the format is as follows:
 
 A note unit is represented as:
 ```
-a num | a binary (start with 0b prefix) | a string (contain 'd', 'f', 'j', 'k' and 0 < length <= 4>) | (empty)
+a num | a binary (start with 0b prefix) | (empty)
 ```
 
 And all of `Notes` part is a sequence of note units separated by semicolons (`,`).

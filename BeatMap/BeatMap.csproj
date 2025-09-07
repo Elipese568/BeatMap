@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <PackageReference Include="Elipese.EUtility.ConsoleEx.BottomMessage" Version="1.0.1" />
+    <PackageReference Include="System.Text.Json" Version="9.0.8" />
   </ItemGroup>
 
   <ItemGroup>
