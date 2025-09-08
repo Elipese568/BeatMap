@@ -13,10 +13,17 @@ using System.Text.RegularExpressions;
 
 namespace BeatMap;
 
+public enum NoteType
+{
+    Tap,
+    Drag
+}
+
 public class Note
 {
     public int Track;      // 0~8
     public double TimeMs;  // 判定时间
+    public NoteType Type;
 }
 
 public class SpeedSegment
@@ -60,7 +67,7 @@ public partial class BeatmapParser
     [GeneratedRegex(@"\((.*?)\)")]
     public static partial Regex MatchBpmAttribute();
 
-    [GeneratedRegex(@"0b[01]+|\d+")]
+    [GeneratedRegex(@"d{0,1}(0b[01]+|\d+)")]
     public static partial Regex MatchNoteBinaryOrDecimal();
 
     public static Beatmap Parse(string filePath)
@@ -98,18 +105,23 @@ public partial class BeatmapParser
             keyString = bpmAttr.Success ? keyString.Replace(bpmAttr.Value, "") : keyString;
             keyString = MatchNoteBinaryOrDecimal().Match(keyString).Value;
             
-            int integer = -1;
-            if (keyString.StartsWith("0b"))
+            foreach(var currentString in keyString.Split("/"))
             {
-                integer = Convert.ToInt32(keyString[2..], 2);
-            }
-            if (integer != -1 || int.TryParse(keyString, out integer))
-            {
-                for (int track = 0; track < map.Keys; track++)
+                int integer = -1;
+                bool isDrag = currentString.StartsWith('d');
+                string withoutDecoration = currentString[(isDrag?1:0)..];
+                if (withoutDecoration.StartsWith(isDrag?"d0b":"0b"))
                 {
-                    if ((integer & (1 << (map.Keys - 1 - track))) != 0)
+                    integer = Convert.ToInt32(withoutDecoration[(isDrag?3:2)..], 2);
+                }
+                if (integer != -1 || int.TryParse(withoutDecoration, out integer))
+                {
+                    for (int track = 0; track < map.Keys; track++)
                     {
-                        map.Notes.Add(new Note { Track = track, TimeMs = judgeTime });
+                        if ((integer & (1 << (map.Keys - 1 - track))) != 0)
+                        {
+                            map.Notes.Add(new Note { Track = track, TimeMs = judgeTime, Type = isDrag ? NoteType.Drag : NoteType.Tap });
+                        }
                     }
                 }
             }
@@ -1124,7 +1136,7 @@ internal class Program
         bool updating = false;
 
         // 每个轨道的判定时间
-        List<TimeSpan?>[] trackJudgeTimes = [.. Enumerable.Range(0, beatmap.Keys).Select(i => beatmap.Notes.Where(x => x.Track == i).Select(x => TimeSpan.FromMilliseconds(x.TimeMs)).Cast<TimeSpan?>().ToList()).Reverse()];
+        List<(TimeSpan,NoteType)?>[] trackJudgeTimes = [.. Enumerable.Range(0, beatmap.Keys).Select(i => beatmap.Notes.Where(x => x.Track == i).Select(x => (TimeSpan.FromMilliseconds(x.TimeMs), x.Type)).Cast<(TimeSpan,NoteType)?>().ToList()).Reverse()];
         int keys = beatmap.Keys;
 
         DateTime startJudgeTime;
@@ -1133,7 +1145,7 @@ internal class Program
         int score = 0;
         double offsetLostScoreRadio = setting.AccLostScoreRadio;
         bool showMissMessage = setting.ShowMissMessage;
-        int maxScore = beatmap.Notes.Count * (ClickedScore + AccScore) + GetMaxComboScore(beatmap.Notes.Count);
+        int maxScore = beatmap.Notes.Count * ClickedScore + beatmap.Notes.Where(x => x.Type == NoteType.Tap).Count() * AccScore + GetMaxComboScore(beatmap.Notes.Count);
 
         int notesCount = beatmap.Notes.Count;
         int clickedNoteCount = 0;
@@ -1183,10 +1195,10 @@ internal class Program
         }
 
         // 判定方法（统一处理 Auto/手动）
-        bool JudgeTrack(int trackIndex, string name)
+        bool JudgeTrack(int trackIndex, bool isPressed, string name)
         {
             if (trackJudgeTimes[trackIndex].FirstOrDefault(x =>
-                Math.Abs(x.Value.TotalMilliseconds - nowTime.TotalMilliseconds - judgeOffset) < JudgeTime) is TimeSpan judgeTS)
+                Math.Abs(x.Value.Item1.TotalMilliseconds - nowTime.TotalMilliseconds - judgeOffset) < JudgeTime && ((x.Value.Item2 == NoteType.Tap && !isPressed) || (x.Value.Item2 == NoteType.Drag))) is (TimeSpan judgeTS, NoteType type))
             {
                 int lostScore = 0;
                 if (autoPlay)
@@ -1199,10 +1211,10 @@ internal class Program
                     lostScore = (int)(Math.Abs(delta) * offsetLostScoreRadio);
                 }
 
-                score += ClickedScore + Math.Max(0,AccScore - lostScore);
+                score += ClickedScore + (type == NoteType.Tap? Math.Max(0,AccScore - lostScore) : 0);
                 clickedNoteCount++;
-                trackJudgeTimes[trackIndex].Remove(judgeTS);
-                judgeStates.Add((trackIndex, $"{name} Clicked!{(autoPlay ? " (Auto)" : "")} -{(Math.Max(0, AccScore - lostScore) == 0? 500 : lostScore)}"));
+                trackJudgeTimes[trackIndex].Remove((judgeTS,type));
+                judgeStates.Add((trackIndex, $"{name} {(isPressed?"Holded!":"Clicked")}{(autoPlay ? " (Auto)" : "")} -{(type == NoteType.Tap ? (Math.Max(0, AccScore - lostScore) == 0? 500 : lostScore) : 0)}"));
                 combo++;
                 if (combo > maxCombo) maxCombo = combo;
                 score += combo;
@@ -1290,7 +1302,7 @@ internal class Program
                 int displayRowIndex = RowCountInScreen - 1 - (int)Math.Floor(relRows);
                 var line = paneContent[displayRowIndex].ToCharArray();
                 int pos = (keys - note.Track - 1) * KeyWidth;
-                for (int k = 0; k < KeyWidth; k++) line[pos + k] = '#';
+                for (int k = 0; k < KeyWidth; k++) line[pos + k] = note.Type == NoteType.Drag?'-':'#';
                 paneContent[displayRowIndex] = new string(line);
             }
 
@@ -1303,7 +1315,7 @@ internal class Program
             {
                 Console.ResetColor();
                 Enumerable.Range(0, beatmap.Keys)
-                          .Select(ti => JudgeTrack(ti, $"Track {ti + 1}"))
+                          .Select(ti => JudgeTrack(ti, false, $"Track {ti + 1}"))
                           .Aggregate(new ContentRender(), (x,y) =>
                           {
                               x.Add(new ContentBlock() { Content = GetKeyString('-'), Background = y ? ConsoleColor.White : ConsoleColor.Black });
@@ -1319,16 +1331,19 @@ internal class Program
                     var key = (Keyboard.VirtualKeyStates)(int)keybindings[i];
                     currentState.Add(DisplayKey(key, GetKeyString('-')));
                 }
-
                 for (int i = 0; i < keys; i++)
                 {
                     if (!oldKeyStates[i] && currentState[i])
                     {
                         Debug.WriteLine($"Track{i + 1} Pressed!");
-                        JudgeTrack(i, $"Track {i + 1}");
+                        JudgeTrack(i, false, $"Track {i + 1}");
+                    }
+                    if (oldKeyStates[i]&&currentState[i])
+                    {
+                        Debug.WriteLine($"Track{i + 1} Holded!");
+                        JudgeTrack(i, true, $"Track {i + 1}");
                     }
                 }
-
                 oldKeyStates = currentState;
             }
             
@@ -1337,7 +1352,7 @@ internal class Program
             for (int t = 0; t < keys; t++)
             {
                 var misses = trackJudgeTimes[t]
-                    .Where(x => (nowTime - x.Value).TotalMilliseconds - judgeOffset > JudgeTime)
+                    .Where(x => (nowTime - x.Value.Item1).TotalMilliseconds - judgeOffset > JudgeTime)
                     .ToList();
                 foreach (var miss in misses)
                 {

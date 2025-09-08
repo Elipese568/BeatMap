@@ -93,6 +93,7 @@ public class Note : TimedElement
 /// 
 /// </summary>
 public int column { get; set; }
+
 }
 
 public class Test
