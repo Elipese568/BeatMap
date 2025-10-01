@@ -1,6 +1,14 @@
-﻿using EUtility.ConsoleEx.Message;
+﻿using BeatMap.Core;
+using BeatMap.Extensions;
+using BeatMap.Helper;
+using BeatMap.Input;
+using BeatMap.Parser;
+using BeatMap.Setting;
+using BeatMap.UI;
+using EUtility.ConsoleEx.Message;
 using EUtility.StringEx.StringExtension;
-using PInvoke.Net;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using System;
 using System.Diagnostics;
 using System.Reflection;
@@ -9,429 +17,68 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 
 namespace BeatMap;
-
-public enum NoteType
-{
-    Tap,
-    Drag
-}
-
-public class Note
-{
-    public int Track;      // 0~8
-    public double TimeMs;  // 判定时间
-    public NoteType Type;
-}
-
-public class SpeedSegment
-{
-    public double StartTimeMs;
-    public double Speed;
-}
-
-public class Beatmap
-{
-    public string Name { get; set; }
-    public string Artist { get; set; }
-    public double Bpm { get; set; }
-    public int Keys { get; set; }
-    public List<Note> Notes { get; set; } = new();
-    public List<SpeedSegment> SpeedSegments { get; set; } = new();
-    // ✅ 新增：与 Notes 同索引对齐的 floorUnits（时间∫速度比）
-    // 单位：ms * ratio（无量纲“单位时间积”，渲染时再乘 (setting.Speed / 1000) 变成“屏幕行”）
-    public List<double> NoteFloorUnits { get; set; } = new();
-
-    // ✅ 新增：每个变速段起点的“累计 floorUnits”
-    // 用来 O(1) 求 t 时刻的 floorUnits：cum[i] + (t - seg[i].Start)*seg[i].Speed
-    public List<double> SegmentCumUnits { get; set; } = new();
-}
-
-[AttributeUsage(AttributeTargets.Property)]
-public class SettingDisplayName : Attribute
-{     
-    public string Name { get; }
-    public SettingDisplayName(string name) => Name = name;
-}
-
-public partial class BeatmapParser
-{
-    [GeneratedRegex(@"\[(.*?)\]")]
-    public static partial Regex MatchAttributes();
-
-    [GeneratedRegex(@"\{(.*?)\}")]
-    public static partial Regex MatchPeriodUnitAttribute();
-
-    [GeneratedRegex(@"\((.*?)\)")]
-    public static partial Regex MatchBpmAttribute();
-
-    [GeneratedRegex(@"d{0,1}(0b[01]+|\d+)")]
-    public static partial Regex MatchNoteBinaryOrDecimal();
-
-    public static Beatmap Parse(string filePath)
-    {
-        string content = File.ReadAllText(filePath);
-        string[] parts = content.Split(";");
-        if (parts.Length < 5)
-            throw new ArgumentException("Invalid beatmap format.");
-        
-        Beatmap map = new()
-        {
-            Name = parts[0].Trim(),
-            Artist = parts[1].Trim(),
-            Bpm = double.Parse(parts[2].Trim()),
-            Keys = int.Parse(parts[3].Trim())
-        };
-
-        double msPerBeat = 60000.0 / map.Bpm;
-        string[] rowStrings = parts[4].Trim().Split(",");
-
-        double lastJudgeTime = 0; // 用于检测空行间隔
-        int currentNotePeriodF = 4;
-        for (int rowIndex = 0; rowIndex < rowStrings.Length; rowIndex++)
-        {
-            string rowString = rowStrings[rowIndex].Trim();
-            double judgeTime = lastJudgeTime + msPerBeat / currentNotePeriodF;
-            lastJudgeTime = judgeTime;
-            if (string.IsNullOrWhiteSpace(rowString)) continue;
-
-            var attributes = MatchAttributes().Match(rowString);
-            var periodAttr = MatchPeriodUnitAttribute().Match(rowString);
-            var bpmAttr = MatchBpmAttribute().Match(rowString);
-            string keyString = attributes.Success ? rowString.Replace(attributes.Value, "") : rowString;
-            keyString = periodAttr.Success ? keyString.Replace(periodAttr.Value, "") : keyString;
-            keyString = bpmAttr.Success ? keyString.Replace(bpmAttr.Value, "") : keyString;
-            keyString = MatchNoteBinaryOrDecimal().Match(keyString).Value;
-            
-            foreach(var currentString in keyString.Split("/"))
-            {
-                int integer = -1;
-                bool isDrag = currentString.StartsWith('d');
-                string withoutDecoration = currentString[(isDrag?1:0)..];
-                if (withoutDecoration.StartsWith(isDrag?"d0b":"0b"))
-                {
-                    integer = Convert.ToInt32(withoutDecoration[(isDrag?3:2)..], 2);
-                }
-                if (integer != -1 || int.TryParse(withoutDecoration, out integer))
-                {
-                    for (int track = 0; track < map.Keys; track++)
-                    {
-                        if ((integer & (1 << (map.Keys - 1 - track))) != 0)
-                        {
-                            map.Notes.Add(new Note { Track = track, TimeMs = judgeTime, Type = isDrag ? NoteType.Drag : NoteType.Tap });
-                        }
-                    }
-                }
-            }
-
-            if(periodAttr.Success)
-            {
-                currentNotePeriodF = int.Parse(periodAttr.Value.Trim('{', '}'));
-            }
-            lastJudgeTime = judgeTime;
-
-            if(bpmAttr.Success)
-            {
-                if(double.TryParse(bpmAttr.Value.Trim('(', ')'), out double newBpm) && newBpm > 0)
-                {
-                    map.Bpm = newBpm;
-                    msPerBeat = 60000.0 / map.Bpm;
-                }
-            }
-            // 解析属性
-            if (attributes.Success)
-            {
-                foreach (var attrUnit in attributes.Value[1..^1].Split('&'))
-                {
-                    var kv = attrUnit.Split(':');
-                    if (kv.Length == 2 && kv[0].Equals("s", StringComparison.CurrentCultureIgnoreCase))
-                    {
-                        if (double.TryParse(kv[1], out double speedRadio))
-                        {
-                            map.SpeedSegments.Add(new SpeedSegment
-                            {
-                                StartTimeMs = judgeTime,
-                                Speed = speedRadio
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // 如果没定义变速，默认一个
-        if (map.SpeedSegments.Count == 0)
-            map.SpeedSegments.Add(new SpeedSegment { StartTimeMs = 0, Speed = 1.0 });
-
-        // ✅ 规范化变速段：按时间排序，确保 0ms 段存在，去除同一时间的重复定义（保留最后一个）
-        map.SpeedSegments = map.SpeedSegments
-            .GroupBy(s => s.StartTimeMs)
-            .Select(g => g.Last())
-            .OrderBy(s => s.StartTimeMs)
-            .ToList();
-
-        if (map.SpeedSegments[0].StartTimeMs > 0)
-            map.SpeedSegments.Insert(0, new SpeedSegment { StartTimeMs = 0, Speed = 1.0 });
-
-        // ✅ 预计算每个段起点的累计 floorUnits（∫ ratio dt）
-        map.SegmentCumUnits.Clear();
-        map.SegmentCumUnits.Capacity = map.SpeedSegments.Count;
-
-        double cum = 0;
-        map.SegmentCumUnits.Add(0); // 第 0 段起点累计为 0
-        for (int i = 1; i < map.SpeedSegments.Count; i++)
-        {
-            var prev = map.SpeedSegments[i - 1];
-            var cur = map.SpeedSegments[i];
-            cum += (cur.StartTimeMs - prev.StartTimeMs) * prev.Speed; // 累计上一段的面积
-            map.SegmentCumUnits.Add(cum);
-        }
-
-        // ✅ 为每个 Note 计算 floorUnits（与 Notes 对齐存储）
-        map.NoteFloorUnits.Clear();
-        map.NoteFloorUnits.Capacity = map.Notes.Count;
-
-        // 二分工具：返回最后一个 StartTimeMs <= t 的段索引
-        int FindSegmentIndex(double t)
-        {
-            int lo = 0, hi = map.SpeedSegments.Count - 1, ans = 0;
-            while (lo <= hi)
-            {
-                int mid = (lo + hi) >> 1;
-                if (map.SpeedSegments[mid].StartTimeMs <= t)
-                {
-                    ans = mid;
-                    lo = mid + 1;
-                }
-                else hi = mid - 1;
-            }
-            return ans;
-        }
-
-        // 注意：保持与 Notes 原有顺序一致，floorUnits 用同样的索引
-        foreach (var note in map.Notes)
-        {
-            int idx = FindSegmentIndex(note.TimeMs);
-            var seg = map.SpeedSegments[idx];
-            double baseCum = map.SegmentCumUnits[idx];
-            double floorUnits = baseCum + (note.TimeMs - seg.StartTimeMs) * seg.Speed;
-            map.NoteFloorUnits.Add(floorUnits);
-        }
-
-        return map;
-    }
-}
-
-
-public class PlaySetting
-{
-    public int Speed { get; set; } = 16;
-    [SettingDisplayName("AccLostScoreRadio(Enter to view compensation arc)")]
-    public double AccLostScoreRadio { get; set; } = 0.24;
-    public int JudgeOffset { get; set; } = -40;
-    public bool ShowMissMessage { get; set; } = false;
-    public bool AutoPlay { get; set; } = false;
-    public bool UnperfectAuto { get; set; } = false;
-    public double UnperfectRadio { get; set; } = 0.2;
-    public int KeyWidth { get; set; } = 6; // Width of each key display in characters
-    public int PanelHeight { get; set; } = 16; // Height of the game panel in rows
-    public Dictionary<int, string> KeyBinding { get; set; } = new()
-    {
-        [2] = "FJ",
-        [3] = "D K",
-        [4] = "DFJK",
-        [5] = "DF JK",
-        [6] = "SDFJKL",
-        [7] = "SDF JKL",
-        [8] = "ASDFHJKL",
-        [9] = "ASDF HJKL"
-    };
-}
-
-public static class Menu
-{
-    static MessageOutputerOnWindow menuguide = new()
-        {
-            new MessageUnit()
-            {
-                Title = "↑",
-                Description = "上一个选项"
-            },
-            new MessageUnit()
-            {
-                Title = "↓",
-                Description = "下一个选项"
-            },
-            new MessageUnit()
-            {
-                Title = "Enter",
-                Description = "确认选项"
-            }
-        };
-    static Menu()
-    {
-
-    }
-    public static int WriteMenu(Dictionary<string, string> menuitem, int curstartindex = 2, bool descriptionEnabled = true)
-    {
-        int select = 0;
-        Console.CursorTop = curstartindex;
-        for (int i = 0; i < Console.WindowHeight - curstartindex - 1; i++)
-        {
-            Console.WriteLine(new string(' ', Console.WindowWidth));
-        }
-        while (true)
-        {
-            menuguide.Write();
-            Console.CursorTop = curstartindex;
-            int index = 0;
-            foreach (var item in menuitem)
-            {
-                if (index == select)
-                {
-                    Console.BackgroundColor = ConsoleColor.White;
-                    Console.ForegroundColor = ConsoleColor.Black;
-                    Console.WriteLine("   -->" + item.Key + new string(' ', Console.WindowWidth - (item.Key + "   -->").GetStringInConsoleGridWidth()));
-                    Console.ResetColor();
-
-                    if(descriptionEnabled)
-                    {
-                        var ct = Console.CursorTop;
-                        Console.CursorTop = menuitem.Count + 2 + curstartindex;
-                        Console.WriteLine("说明：");
-                        var dct = Console.CursorTop;
-                        for (int i = 0; i < Console.WindowHeight - Console.CursorTop - 1; i++)
-                        {
-                            Console.WriteLine(new string(' ', Console.WindowWidth));
-                        }
-                        Console.CursorTop = dct;
-                        Console.WriteLine(item.Value);
-                        Console.CursorTop = ct;
-                    }
-                }
-                else
-                {
-                    Console.WriteLine(item.Key + new string(' ', Console.WindowWidth - item.Key.GetStringInConsoleGridWidth()));
-                }
-                index++;
-            }
-            Console.CursorVisible = false;
-            var key = Console.ReadKey(true);
-            if (key.Key == ConsoleKey.UpArrow)
-            {
-                select--;
-                if (select < 0)
-                {
-                    select = menuitem.Count - 1;
-                }
-            }
-            else if (key.Key == ConsoleKey.DownArrow)
-            {
-                select++;
-                select %= menuitem.Count;
-            }
-            else if (key.Key == ConsoleKey.Enter)
-            {
-                return select;
-            }
-        }
-    }
-
-    public static int WriteLargerMenu(Dictionary<string, string> menuitem, int maxitems = 8, int curstartindex = 2)
-    {
-        int select = 0, startitem = 0, enditem = maxitems;
-        void WriteItems()
-        {
-            int index = startitem;
-            foreach (var item in menuitem.Skip(startitem).SkipLast(menuitem.Count - startitem - enditem))
-            {
-                if (index == select)
-                {
-                    Console.BackgroundColor = ConsoleColor.White;
-                    Console.ForegroundColor = ConsoleColor.Black;
-                    Console.WriteLine("   -->" + item.Key + new string(' ', Console.WindowWidth - (item.Key + "   -->").GetStringInConsoleGridWidth()));
-                    Console.ResetColor();
-
-                    var ct = Console.CursorTop;
-                    Console.CursorTop = maxitems + 2 + curstartindex;
-                    Console.WriteLine("说明：");
-                    var dct = Console.CursorTop;
-                    for (int i = 0; i < Console.WindowHeight - Console.CursorTop - 1; i++)
-                    {
-                        Console.WriteLine(new string(' ', Console.WindowWidth));
-                    }
-                    Console.CursorTop = dct;
-                    Console.WriteLine(item.Value);
-                    Console.CursorTop = ct;
-                }
-                else
-                {
-                    Console.WriteLine(item.Key + new string(' ', Console.WindowWidth - item.Key.GetStringInConsoleGridWidth()));
-                }
-                index++;
-            }
-        }
-
-
-        while (true)
-        {
-            menuguide.Write();
-            Console.CursorTop = curstartindex;
-            WriteItems();
-
-            Console.CursorVisible = false;
-            var key = Console.ReadKey(true);
-            if (key.Key == ConsoleKey.UpArrow)
-            {
-                select--;
-                if (select < 0)
-                    select = 0;
-                if (select < startitem)
-                {
-                    startitem = select;
-                    enditem--;
-                    if (startitem < 0)
-                    {
-                        startitem = menuitem.Count - enditem;
-                        enditem = menuitem.Count - 1;
-                        select = enditem;
-                    }
-
-                }
-            }
-            else if (key.Key == ConsoleKey.DownArrow)
-            {
-                select++;
-                if (select > menuitem.Count - 1)
-                    select = menuitem.Count - 1;
-                if (select > enditem)
-                {
-                    enditem = select;
-                    startitem++;
-                    if (enditem > menuitem.Count)
-                    {
-                        enditem = maxitems;
-                        select = 0;
-                        startitem = 0;
-                    }
-                }
-            }
-            else if (key.Key == ConsoleKey.Enter)
-            {
-                return select;
-            }
-        }
-    }
-}
 internal class Program
 {
     private const string EdgeProcessThresholeDisplayHeader = "Edge Process Threshole";
+    public class PlaySettingPropertyHandler : IPropertyActiveHandler
+    {
+        public void OnPropertyActivated(string propertyName, object propertyValue)
+        {
+            if (propertyName == "AccLostScoreRadio")
+            {
+                var drawer = new ChartDrawer(
+                    (i, max, lostAccSR, processEdge) => CalculationHelper.CalculateFinalAcc(i, max, lostAccSR, processEdge),
+                    CalculationHelper.CalculateEdgeThresholeTime
+                );
+
+                // 传入 AccLostScoreRadio
+                drawer.DrawLostScoreAccArc((double)propertyValue);
+
+            }
+        }
+    }
+    public class PlaySettingCustomTypeHandler : ICustomTypeHandler
+    {
+        public object HandleCustomType(object currentValue, Type targetType)
+        {
+            if (currentValue is Dictionary<int, string> dict)
+            {
+                // 调用 KeyBindService
+                return Program.GetService<KeyBindService>().ConfigureKeyBinding(dict);
+            }
+            return currentValue;
+        }
+
+        public string CustomTypeToString(object currentValue, Type targetType)
+        {
+            if (currentValue is Dictionary<int, string> dict)
+            {
+                return string.Join(", ", dict.Select(kv => $"{kv.Key}:{kv.Value.Replace(" ", "[SPACE]")}"));
+            }
+            return "<Unknown>";
+        }
+    }
+
+    public static IHost ApplicationHost { get; private set; }
+
+    public static T GetService<T>() => ApplicationHost.Services.GetService<T>();
 
     static void Main(string[] args)
     {
-        Beatmap beatmap = BeatmapParser.Parse(args[0]);
+        ApplicationHost = 
+            Host.CreateDefaultBuilder(args)
+                .ConfigureServices(services =>
+                {
+                    services.UseSetting()
+                            .UseBeatmapService()
+                            .opt
+                })
+
+        Beatmap beatmap = GetService<BeatmapParser>().Parse(args[0]);
         PlaySetting setting;
         if (!Path.Exists("setting.json"))
         {
@@ -466,7 +113,7 @@ internal class Program
                 Gaming(beatmap, setting);
                 break;
             case 1:
-                setting = Setting<PlaySetting>(OtherOptionTypeProcessor, OtherOptionStringConverter, OnPropertrySelectActive, Default: setting);
+                setting = GetService<SettingService<PlaySetting>>().Configure(setting);
                 Gaming(beatmap, setting);
                 break;
         }
@@ -1485,7 +1132,7 @@ internal class Program
         int score,
         int maxScore,
         double offsetLostScoreRadio = 0.25,
-        double powerK = 2, // 可以调节曲线陡峭度
+        double powerK = 10, // 可以调节曲线陡峭度
         bool processEdge = true)
     {
         offsetLostScoreRadio /= 2;

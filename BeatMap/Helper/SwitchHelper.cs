@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace BeatMap;
+namespace BeatMap.Helper;
 internal class SwitchHelper
 {
     public class CaseBlock<T>

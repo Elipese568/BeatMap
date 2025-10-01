@@ -6,7 +6,7 @@ Drag your beatmap to executable file or input following command:
 
 `BeatMap "path\to\your\beatmap.bm"`
 
-## BeatMap(.bm) formating description
+## BeatMap(.bm) formatting description
 A BeatMap file is a plain text file with the following structure:
 
 ```
@@ -16,7 +16,7 @@ BPM;
 Notes;
 ```
 
-And in `Notes`, the format is as follows:
+### Notes formatting
 
 A note unit is represented as:
 ```
@@ -25,8 +25,8 @@ a num | a binary (start with 0b prefix) | (empty)
 
 And all of `Notes` part is a sequence of note units separated by semicolons (`,`).
 
-> [!IMPORTANT]
-> Each note unit in game is separated by a fixed time interval, which is calculated as `60000 / BPM` milliseconds, just a quarter note duration.
+### Attributes
+
 
 ---
 Have fun!

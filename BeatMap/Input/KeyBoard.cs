@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace PInvoke.Net
+namespace BeatMap.Input
 {
     public class Keyboard
     {
